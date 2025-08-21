@@ -1,3 +1,18 @@
+"""
+guardian.py
+-------------
+
+A small security toolkit to defend against the teaching malware "moo".
+
+Core capabilities:
+- Detect the moo binary by exact SHA-256 fingerprint (stored in signatures.json)
+- Quarantine or remove detected moo binaries
+- Decrypt files that were scrambled by moo
+
+This file exposes a single CLI with subcommands: scan, decrypt-file, decrypt-dir.
+It is intended for classroom/lab demonstrations; use only on disposable test data.
+"""
+
 import argparse
 import hashlib
 import json
@@ -8,6 +23,11 @@ from typing import Optional, List, Tuple
 
 
 def load_signatures() -> dict:
+    """Load signatures from signatures.json located next to this script.
+
+    Returns a mapping with at least the key "moo_sha256" containing the
+    expected SHA-256 hash string for the moo binary to detect.
+    """
     repo_dir = Path(__file__).resolve().parent
     sig_path = repo_dir / "signatures.json"
     if not sig_path.exists():
@@ -17,6 +37,7 @@ def load_signatures() -> dict:
 
 
 def file_sha256(path: Path, chunk_size: int = 65536) -> str:
+    """Compute the SHA-256 digest of a file efficiently in chunks."""
     hasher = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
@@ -25,6 +46,7 @@ def file_sha256(path: Path, chunk_size: int = 65536) -> str:
 
 
 def is_moo(path: Path, signatures: dict) -> bool:
+    """Return True if the file's SHA-256 matches the known moo fingerprint."""
     try:
         return file_sha256(path) == signatures.get("moo_sha256")
     except Exception:
@@ -32,10 +54,12 @@ def is_moo(path: Path, signatures: dict) -> bool:
 
 
 def ensure_quarantine_dir(path: Path) -> None:
+    """Create the quarantine directory if it does not already exist."""
     path.mkdir(parents=True, exist_ok=True)
 
 
 def quarantine(path: Path, quarantine_dir: Path) -> Path:
+    """Move the detected file into the quarantine directory and return destination path."""
     ensure_quarantine_dir(quarantine_dir)
     dest = quarantine_dir / (path.name + ".quarantine")
     shutil.move(str(path), str(dest))
@@ -43,7 +67,11 @@ def quarantine(path: Path, quarantine_dir: Path) -> Path:
 
 
 def moo_decrypt_bytes(data: bytes) -> bytes:
-    # Inverse of (x + 4) ^ 0xFF => (y ^ 0xFF) - 4 mod 256
+    """Apply the inverse transform of moo to a bytes object and return plaintext.
+
+    Moo encrypts each byte as E(x) = (x + 4) XOR 0xFF.
+    The inverse is D(y) = (y XOR 0xFF) - 4 (mod 256).
+    """
     out = bytearray(len(data))
     for i, b in enumerate(data):
         out[i] = ((b ^ 0xFF) - 4) & 0xFF
@@ -51,6 +79,7 @@ def moo_decrypt_bytes(data: bytes) -> bytes:
 
 
 def decrypt_file(path: Path, in_place: bool = True, output: Optional[Path] = None) -> Path:
+    """Decrypt a single file in place or write the result to an explicit output path."""
     with path.open("rb") as f:
         data = f.read()
     dec = moo_decrypt_bytes(data)
@@ -66,6 +95,11 @@ def decrypt_file(path: Path, in_place: bool = True, output: Optional[Path] = Non
 
 
 def scan_directory(root: Path, signatures: dict, quarantine_dir: Optional[Path] = None, remove: bool = False) -> List[Tuple[Path, str]]:
+    """Walk a directory tree recursively and act on any moo detections.
+
+    Returns a list of (path, status) tuples where status is one of
+    "detected", "quarantined -> <dest>", "removed", or "remove_failed".
+    """
     findings: List[Tuple[Path, str]] = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
@@ -89,6 +123,7 @@ def scan_directory(root: Path, signatures: dict, quarantine_dir: Optional[Path] 
 
 
 def scan_file(path: Path, signatures: dict, quarantine_dir: Optional[Path] = None, remove: bool = False) -> Optional[str]:
+    """Check a single file and optionally quarantine or remove it if detected."""
     if is_moo(path, signatures):
         if remove:
             try:
@@ -104,6 +139,7 @@ def scan_file(path: Path, signatures: dict, quarantine_dir: Optional[Path] = Non
 
 
 def cmd_scan(args) -> int:
+    """CLI handler for the scan subcommand."""
     sigs = load_signatures()
     quarantine_dir = Path(args.quarantine_dir).expanduser().resolve() if args.quarantine else None
     target = Path(args.path).expanduser().resolve()
@@ -123,6 +159,7 @@ def cmd_scan(args) -> int:
 
 
 def cmd_decrypt_file(args) -> int:
+    """CLI handler for decrypting a single file."""
     target = Path(args.path).expanduser().resolve()
     if args.output:
         out = Path(args.output).expanduser().resolve()
@@ -134,6 +171,7 @@ def cmd_decrypt_file(args) -> int:
 
 
 def cmd_decrypt_dir(args) -> int:
+    """CLI handler for decrypting all files under a directory recursively (in place)."""
     root = Path(args.path).expanduser().resolve()
     count = 0
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -149,6 +187,7 @@ def cmd_decrypt_dir(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return the argument parser for the guardian CLI."""
     parser = argparse.ArgumentParser(prog="guardian", description="Detect/quarantine/remove moo and decrypt files")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -173,6 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Entry point for the CLI program."""
     parser = build_parser()
     args = parser.parse_args()
     return args.func(args)
