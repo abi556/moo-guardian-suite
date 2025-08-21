@@ -65,14 +65,20 @@ def decrypt_file(path: Path, in_place: bool = True, output: Optional[Path] = Non
         return output
 
 
-def scan_directory(root: Path, signatures: dict, quarantine_dir: Optional[Path] = None) -> List[Tuple[Path, str]]:
+def scan_directory(root: Path, signatures: dict, quarantine_dir: Optional[Path] = None, remove: bool = False) -> List[Tuple[Path, str]]:
     findings: List[Tuple[Path, str]] = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
             p = Path(dirpath) / name
             try:
                 if is_moo(p, signatures):
-                    if quarantine_dir is not None:
+                    if remove:
+                        try:
+                            p.unlink()
+                            findings.append((p, "removed"))
+                        except Exception:
+                            findings.append((p, "remove_failed"))
+                    elif quarantine_dir is not None:
                         dest = quarantine(p, quarantine_dir)
                         findings.append((p, f"quarantined -> {dest}"))
                     else:
@@ -82,8 +88,14 @@ def scan_directory(root: Path, signatures: dict, quarantine_dir: Optional[Path] 
     return findings
 
 
-def scan_file(path: Path, signatures: dict, quarantine_dir: Optional[Path] = None) -> Optional[str]:
+def scan_file(path: Path, signatures: dict, quarantine_dir: Optional[Path] = None, remove: bool = False) -> Optional[str]:
     if is_moo(path, signatures):
+        if remove:
+            try:
+                path.unlink()
+                return "removed"
+            except Exception:
+                return "remove_failed"
         if quarantine_dir is not None:
             dest = quarantine(path, quarantine_dir)
             return f"quarantined -> {dest}"
@@ -96,13 +108,13 @@ def cmd_scan(args) -> int:
     quarantine_dir = Path(args.quarantine_dir).expanduser().resolve() if args.quarantine else None
     target = Path(args.path).expanduser().resolve()
     if target.is_dir():
-        results = scan_directory(target, sigs, quarantine_dir)
+        results = scan_directory(target, sigs, quarantine_dir=quarantine_dir, remove=args.remove)
         for p, status in results:
             print(f"{p}: {status}")
         print(f"Total matches: {len(results)}")
         return 0
     else:
-        status = scan_file(target, sigs, quarantine_dir)
+        status = scan_file(target, sigs, quarantine_dir=quarantine_dir, remove=args.remove)
         if status:
             print(f"{target}: {status}")
             return 0
@@ -137,12 +149,14 @@ def cmd_decrypt_dir(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="guardian", description="Detect/quarantine moo and decrypt files")
+    parser = argparse.ArgumentParser(prog="guardian", description="Detect/quarantine/remove moo and decrypt files")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_scan = sub.add_parser("scan", help="Scan file or directory for moo binary and optionally quarantine")
+    p_scan = sub.add_parser("scan", help="Scan file or directory for moo binary and optionally quarantine or remove")
     p_scan.add_argument("path", help="Path to file or directory to scan")
-    p_scan.add_argument("--quarantine", action="store_true", help="Quarantine detected moo binaries")
+    group = p_scan.add_mutually_exclusive_group()
+    group.add_argument("--quarantine", action="store_true", help="Quarantine detected moo binaries")
+    group.add_argument("--remove", action="store_true", help="Delete detected moo binaries")
     p_scan.add_argument("--quarantine-dir", default=str(Path.home() / "quarantine"), help="Quarantine directory (default: ~/quarantine)")
     p_scan.set_defaults(func=cmd_scan)
 
