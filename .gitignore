@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+
+# Labs / binaries
+lab/
+moo
+*.exe
+*.out
+*.o
+*.obj
+*.dll
+*.so
+
+# OS
+.DS_Store
+Thumbs.db
